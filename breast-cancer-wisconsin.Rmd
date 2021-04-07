@@ -1,0 +1,393 @@
+---
+title: "Wiscon-Breast-Cancer"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### The breast cancer data set breast-cancer-wisconsin.data.txt from http://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/  (description at http://archive.ics.uci.edu/ml/datasets/Breast+Cancer+Wisconsin+%28Original%29 ) has missing values.
+####    1.	Use the mean/mode imputation method to impute values for the missing data.
+####    2.	Use regression to impute values for the missing data.
+####    3.	Use regression with perturbation to impute values for the missing data.
+####    4.	(Optional) Compare the results and quality of classification models (e.g., SVM, KNN) build using 
+####          (1) the data sets from questions 1,2,3; 
+####          (2) the data that remains after data points with missing values are removed; and 
+####          (3) the data set when a binary variable is introduced to indicate missing values.
+
+Clear environment.
+
+```{r}
+rm(list = ls())
+```
+
+Load libraries
+```{r}
+library(mice)
+library(tidyverse)
+library(rsample)
+library(caret)
+library(VIM)
+ library(class)
+```
+
+Load cancer data.
+
+```{r}
+cancer_data <- read.csv('data/breast-cancer-wisconsin.data.txt', header=FALSE, stringsAsFactors = FALSE, sep=",")
+colnames(cancer_data) <- c('CodeNo','Clump_Thickness','Cell_Size_Uniformity','Cell_Shape_Uniformity','Marginal_Adhesion','Single_Epithelial_Cell_Size','Bare_Nuclei','Bland_Chromatin','Normal_Nucleoli','Mitoses','Class')
+head(cancer_data)
+```
+
+First we convert Bare_Nuclei from char data type to integer then we explore the data. By changing the data type of Bare_Nuclei the "?" are replaced with NA, which helps in the analysis and imputation.
+
+```{r}
+# Convert from char to integer
+cancer_data$Bare_Nuclei <- as.integer(cancer_data$Bare_Nuclei)
+# Explore
+str(cancer_data)
+```
+
+Lets have a good visualization of the missing values.The missing data are ranked per covariate. In a percentage we have approximately 2.3 of missing data in total and 97.7 of clean data.	
+
+```{r}
+mice_plot <- aggr(cancer_data, col=c('blue','red'),numbers=TRUE, sortVars=TRUE,
+labels=names(cancer_data), cex.axis=.7,gap=3, ylab=c("Missing data","Pattern"))
+```
+
+
+Use filter() in dplyr package. We have 16 missing values in Bare_Nuclei column.
+
+```{r}
+cancer_data %>%  filter(is.na(Bare_Nuclei))
+```
+
+Investigate the data.
+
+```{r}
+summary(cancer_data)
+```
+
+Impute missing data using which() function in mice. We get missing by the row and the are 16 missing values in Bare_Nuclei column.The number returned is the row number.So it's easy to locate the missing data.
+
+```{r}
+impute_cancer_data <- which(is.na(cancer_data$Bare_Nuclei))
+impute_cancer_data
+```
+
+We should impute more than 5% of the data. We compute the percentage of missing data.We have approximately 2% of missing data which is within the recommended threshold.
+
+```{r}
+length(impute_cancer_data)/nrow(cancer_data)*100
+```
+
+Separate into two data sets, 
+
+</b>
+1. With missing data 
+
+</b>
+and 
+
+</b>
+2. Without missing data.
+
+Clean data set.
+
+```{r}
+clean_cancer_data <- cancer_data[-impute_cancer_data,]
+head(clean_cancer_data)
+```
+
+Missing data set.
+
+```{r}
+missing_cancer_data <- cancer_data[impute_cancer_data,]
+head(missing_cancer_data)
+```
+
+Let's investigate if there is bias in our missing data, if they belong to one Class (between 2 and 4).
+
+```{r}
+sum(missing_cancer_data$Class == 2)/nrow(missing_cancer_data)
+sum(missing_cancer_data$Class == 4)/nrow(missing_cancer_data)
+```
+Compare with the Class distribution in the entire data. From the statistics above and below. The missing data is baised. There is more missing data in Class 2 than 4.
+
+```{r}
+sum(cancer_data$Class == 2)/nrow(cancer_data)
+sum(cancer_data$Class == 4)/nrow(cancer_data)
+```
+
+Compute mean and mode of Bare_Nuclei column. We have a mean of 3.544656.
+
+```{r}
+Bare_Nuclei_Mean <- as.integer(mean(clean_cancer_data$Bare_Nuclei))
+Bare_Nuclei_Mean
+```
+
+Impute missing data with mean. Then merge the two datasets(clean and imputed).
+
+```{r}
+#Impute
+mean_imputed_data <- missing_cancer_data
+mean_imputed_data$Bare_Nuclei <- Bare_Nuclei_Mean
+#Merge
+mean_imputed_cancer_data <- rbind(clean_cancer_data,mean_imputed_data)
+head(mean_imputed_cancer_data)
+```
+
+Use regression to predict the value of the missing data.
+
+We first fit a linear regression model using the clean data.We need to remove our label column (Class) for this exercise to eliminate bias when predicting Class using imputed data set later.
+
+```{r}
+cancer_reg_model <- lm(Bare_Nuclei~CodeNo+Clump_Thickness+Single_Epithelial_Cell_Size+Mitoses+Cell_Size_Uniformity+Cell_Shape_Uniformity+Marginal_Adhesion+Bland_Chromatin+Normal_Nucleoli,data = clean_cancer_data)
+summary(cancer_reg_model)
+```
+
+We remove insignificant predictors i.e Single_Epithelial_Cell_Size, Mitoses, Cell_Size_Uniformity, Normal_Nucleoli    
+
+```{r}
+cancer_reg_model1 <- lm(Bare_Nuclei~CodeNo+Clump_Thickness+Cell_Shape_Uniformity+Marginal_Adhesion+Bland_Chromatin, data = clean_cancer_data)
+summary(cancer_reg_model1)
+```
+We are going to use cancer_reg_model1 model to predict Bare_Nuclei in our missing data dataset.
+
+We need to remove the insignificant predictors i.e Single_Epithelial_Cell_Size, Mitoses, Cell_Size_Uniformity, Normal_Nucleoli, and Class from missing data dataset before predicting.
+
+```{r}
+#Test data
+test_data <- missing_cancer_data %>% select(CodeNo,Clump_Thickness,Cell_Shape_Uniformity,Marginal_Adhesion,Bland_Chromatin)
+test_data
+```
+
+Predicted the values.
+
+```{r}
+predicted_data <- as.integer(predict.lm(cancer_reg_model1, test_data))
+predicted_data
+```
+
+Lets insert the predicted value to the missing data dataset. Then merge the two datasets(clean and predicted).
+
+```{r}
+#Insert the predicted values
+pred_cancer_data <- missing_cancer_data
+pred_cancer_data$Bare_Nuclei <- predicted_data
+#Merge the two datasets
+predicted_cancer_data <- rbind(clean_cancer_data,pred_cancer_data)
+head(predicted_cancer_data)
+```
+
+Regression with perturbation to impute values. I am using standard deviation of the predicted values we got from regression.
+
+```{r}
+Bare_Nuclei_hat_pert <- as.integer(rnorm(length(impute_cancer_data), predicted_data, sd(predicted_data)))
+Bare_Nuclei_hat_pert
+
+data_reg_pert_imp <- cancer_data
+data_reg_pert_imp[impute_cancer_data,]$Bare_Nuclei <- Bare_Nuclei_hat_pert
+data_reg_pert_imp$Bare_Nuclei <- data_reg_pert_imp$Bare_Nuclei
+head(data_reg_pert_imp)
+```
+
+We can also use mice to perform:
+
+</b>
+1. Imputation using mean.
+
+
+</b>
+2. Imputation using regression. 
+
+
+</b>
+and
+
+
+</b>
+3. Regression with pertubation.
+
+</b>
+As shown below
+
+</b>
+1.Imputation using mean. We use mean method in mice.
+
+```{r}
+mean_impute_data <- mice(cancer_data, m = 1, meth = 'mean' )
+mean_impute_data
+```
+
+2. Imputation using regression. We do this using norm.predict method in mice.
+
+```{r}
+regression_impute_data <- mice(cancer_data, m = 1, meth = 'norm.predict')
+regression_impute_data
+```
+
+3. Regression with pertubation. We do this using norm.nob method in mice.
+
+```{r}
+pert_impute_data <- mice(cancer_data, m = 1, meth = 'norm.nob')
+pert_impute_data
+```
+
+Complete data sets.
+
+Cancer data set with mean impute.
+
+```{r}
+cancer_mean_data <- complete(mean_impute_data)
+head(cancer_mean_data)
+```
+
+Cancer data set with regression prediction impute.
+
+```{r}
+cancer_regression_data <- complete(regression_impute_data)
+head(cancer_regression_data)
+```
+
+Cancer data set with pertubation impute.
+
+```{r}
+cancer_pert_data <- complete(pert_impute_data)
+head(cancer_pert_data)
+```
+
+To test the model performance on the different imputed data sets. We can use the data sets gotten using mice or the other imputed data sets we obtained earlier, there is no difference. For this exercise though I will use the mice imputed data sets.
+
+We going to split our data sets into training and testing data sets.
+
+Set up k range to be used in our knn model analysis below.
+
+```{r}
+range_of_k <- seq(1,10)
+```
+
+Before we train our models. We need to come up with a function to iterate through the values of k as defined above. Fit the model and predict using different k values. Finally return the best value of k based on the model accuracy using the test data set.
+
+```{r}
+modelknn <- function(training_dataset, testing_dataset, k_values) {
+  best_value_of_K = 0 
+  highest_accuracy_value = 0
+  # Iterate through k values
+  for (k in k_values) {
+    # Fit a classification model and then use the fitted model to predict the Class in our test data set. 
+    predictions <- knn(train=training_dataset,test = testing_dataset, cl=training_dataset$Class, k=k)
+    model_accuracy <- round((sum(predictions == testing_dataset$Class) / length(testing_dataset$Class)), digits=3)
+    
+    # Compare the current fitted model accuracy with the current stored highest accuracy value.
+    if (model_accuracy > highest_accuracy_value) {
+      best_value_of_K <- k
+      highest_accuracy_value <- model_accuracy*100
+    }
+    model_accuracy = 0
+  }
+  # Return a list of the best model accuracy and corresponding k value.
+  return (list("k" = best_value_of_K, "accuracy" = highest_accuracy_value))
+}
+```
+
+1. Clean data set. 
+
+```{r}
+set.seed(42)
+clean_dataset_split <- initial_split(clean_cancer_data, prop = 0.7)
+clean_dataset_train <- training(clean_dataset_split)
+clean_dataset_test <- testing(clean_dataset_split)
+
+
+
+print("Results from clean dataset")
+result1 <- modelknn(clean_dataset_train, clean_dataset_test, range_of_k)
+print(paste0("k: ", result1$k))
+print(paste0("Accuracy: ", result1$accuracy,"%"))
+```
+We need to randomly sample the clean and imputed (16 rows) separately, for the following three models.
+
+2. Mean imputed data set
+
+```{r}
+set.seed(42)
+
+clean_mean_cancer_data <- cancer_mean_data[-impute_cancer_data,]
+mean_imputed_cancer_data <- cancer_mean_data[impute_cancer_data,]
+
+cancer_clean_mean_dataset_split <- initial_split(clean_mean_cancer_data, prop = 0.7)
+cancer_mean_dataset_train <- training(cancer_clean_mean_dataset_split)
+cancer_mean_dataset_test <- testing(cancer_clean_mean_dataset_split)
+
+cancer_imputed_mean_dataset_split <- initial_split(mean_imputed_cancer_data, prop = 0.7)
+cancer_imputed_mean_dataset_train <- training(cancer_imputed_mean_dataset_split)
+cancer_imputed_mean_dataset_test <- testing(cancer_imputed_mean_dataset_split)
+
+mean_dataset_train <- rbind(cancer_mean_dataset_train,cancer_imputed_mean_dataset_train)
+mean_dataset_test <- rbind(cancer_mean_dataset_test,cancer_imputed_mean_dataset_test)
+
+print("Results from dataset with imputed mean")
+result2 <- modelknn(mean_dataset_train, mean_dataset_test, range_of_k)
+print(paste0("k: ", result2$k))
+print(paste0("Accuracy: ", result2$accuracy,"%"))
+```
+
+3. Regression imputed data set
+
+```{r}
+set.seed(42)
+
+clean_regression_cancer_data <- cancer_regression_data[-impute_cancer_data,]
+regression_imputed_cancer_data <- cancer_regression_data[impute_cancer_data,]
+
+cancer_clean_regression_dataset_split <- initial_split(clean_regression_cancer_data, prop = 0.7)
+cancer_regression_dataset_train <- training(cancer_clean_regression_dataset_split)
+cancer_regression_dataset_test <- testing(cancer_clean_regression_dataset_split)
+
+cancer_regression_imputed_dataset_split <- initial_split(regression_imputed_cancer_data, prop = 0.7)
+cancer_regression_imputed_dataset_train <- training(cancer_regression_imputed_dataset_split)
+cancer_regression_imputed_dataset_test <- testing(cancer_regression_imputed_dataset_split)
+
+reg_dataset_train <- rbind(cancer_regression_dataset_train,cancer_regression_imputed_dataset_train)
+reg_dataset_test <- rbind(cancer_regression_dataset_test,cancer_regression_imputed_dataset_test)
+
+
+print("Results from dataset with imputed regression")
+result3 <- modelknn(reg_dataset_train, reg_dataset_test, range_of_k)
+print(paste0("k: ", result3$k))
+print(paste0("Accuracy: ", result3$accuracy,"%"))
+```
+
+4. Regression with pertubation imputed data set.
+
+```{r}
+set.seed(42)
+
+clean_pert_cancer_data <- cancer_pert_data[-impute_cancer_data,]
+pert_imputed_cancer_data <- cancer_pert_data[impute_cancer_data,]
+
+cancer_clean_pert_dataset_split <- initial_split(clean_pert_cancer_data, prop = 0.7)
+cancer_pert_dataset_train <- training(cancer_clean_pert_dataset_split)
+cancer_pert_dataset_test <- testing(cancer_clean_pert_dataset_split)
+
+cancer_pert_imputed_dataset_split <- initial_split(pert_imputed_cancer_data, prop = 0.7)
+cancer_pert_imputed_dataset_train <- training(cancer_pert_imputed_dataset_split)
+cancer_pert_imputed_dataset_test <- testing(cancer_pert_imputed_dataset_split)
+
+reg_dataset_train <- rbind(cancer_pert_dataset_train,cancer_pert_imputed_dataset_train)
+reg_dataset_test <- rbind(cancer_pert_dataset_test,cancer_pert_imputed_dataset_test)
+
+
+print("Results from dataset with imputed regression with pertubation")
+result4 <- modelknn(cancer_pert_dataset_train, cancer_pert_dataset_test, range_of_k)
+print(paste0("k: ", result4$k))
+print(paste0("Accuracy: ", result4$accuracy,"%"))
+```
+
+*My Observation:* The model accuracy observed for the various models were so close with the highest at 59.3 and lowest 59.1. There was very little difference in it using our data set. 
+There is no clear indication to show that a certain imputation method gives a better accuracy than the other.
+
+
+

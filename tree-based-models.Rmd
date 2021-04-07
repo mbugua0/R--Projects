@@ -1,0 +1,556 @@
+---
+title: "Tree Based Models"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### *Using the the US crime data set uscrime.txt. We need to find the best model we can using (a) a regression tree model, and (b) a random forest model. In R, you can use the tree package or the rpart package, and the randomForest package.  For each model, we need to describe one or two qualitative takeaways we get from analyzing the results (i.e., don’t just stop when you have a good model, but interpret it too).*
+
+My solution: 
+i. I will train a decision tree model, apply cross validation to check the model performance. Prune the tree and compare the performance of the pruned and unpruned tree. Use the two decision tree models to predict the crime on our test data.
+
+ii. I will train a random forest model, then use grid search to get the optimal hyper parameters. Lastly, use the two trained random forest models to predict the crime on our test data.
+
+
+Clear environment.
+
+```{r}
+rm(list = ls())
+```
+
+Load libraries.
+
+```{r}
+library(tree)
+library(randomForest)
+library(h2o)
+```
+
+Load the US Crime data into a data frame.
+
+```{r}
+uscrimes <- read.table('data/uscrime.txt', header = TRUE, stringsAsFactors = FALSE)
+head(uscrimes)
+```
+
+### *Fit Regression tree model and explore the fitted model.*
+
+```{r}
+reg.tree.uscrimes <- tree(Crime~., data = uscrimes)
+
+# Different rules in the tree.
+reg.tree.uscrimes
+```
+
+Plot the decision tree.The plot shows the different possible splitting rules that can be used to effectively predict the type of outcome (Crimes).
+
+```{r}
+par(xpd = NA) # Avoid clipping the text in some device
+plot(reg.tree.uscrimes, col=8, lwd=2)
+text(reg.tree.uscrimes, font=2, digits = 3, pretty = 0)
+title(main = "Unpruned USCrime Regression Tree")
+```
+Summary of the model. 
+
+```{r}
+summary(reg.tree.uscrimes)
+```
+Model has only used 4 features: "Po1" "Pop" "LF"  "NW".
+
+```{r}
+summary(reg.tree.uscrimes)$used
+```
+
+Plot of predicted response vs actual response.
+
+```{r}
+yhat <- predict(reg.tree.uscrimes)
+plot(yhat,uscrimes$Crime)
+```
+
+
+The model sum of squared error (RSS).
+
+```{r}
+RSS <- sum((uscrimes$Crime - yhat)^2)
+RSS
+```
+
+A fully grown tree will overfit the training data and the resulting model might not be performant for predicting the outcome of new test data. We are going to use pruning to overcome this.Our goal here is to see if a smaller subtree can give us comparable results to the fully grown tree. If yes, we should go for the simpler tree because it reduces the likelihood of overfitting.
+
+```{r}
+set.seed(123)
+cv.reg.tree.uscrimes = cv.tree(reg.tree.uscrimes, FUN = prune.tree)
+cv.reg.tree.uscrimes
+```
+
+Plot Cross Validation results.
+It appears that a tree of size 7 performs better using cross-validation, which apparently is the same size as our tree model.
+
+```{r}
+plot(cv.reg.tree.uscrimes)
+
+plot(cv.reg.tree.uscrimes$size, cv.reg.tree.uscrimes$dev / nrow(uscrimes), type = "b",
+     xlab = "Tree Size", ylab = "CV-RMSE")
+```
+
+While the tree of size 7 does have the lowest RMSE, we’ll prune to a size of 5 as it seems to perform just as well.
+
+```{r}
+prune.reg.tree.uscrimes = prune.tree(reg.tree.uscrimes, best = 5)
+summary(prune.reg.tree.uscrimes)
+```
+Plot pruned tree.
+
+```{r}
+par(xpd = NA) # Avoid clipping the text in some device
+plot(prune.reg.tree.uscrimes, col=8, lwd=2)
+text(prune.reg.tree.uscrimes, font=2, digits = 3, pretty = 0)
+title(main = "Pruned USCrime Regression Tree")
+```
+The Root Mean Squared Error for the unpruned tree model.
+
+```{r}
+RMSE.unpruned <- sqrt(summary(reg.tree.uscrimes)$dev / nrow(uscrimes))
+RMSE.unpruned
+```
+
+The Root Mean Squared Error for the pruned tree model.
+
+```{r}
+RMSE.pruned <- sqrt(summary(prune.reg.tree.uscrimes)$dev / nrow(uscrimes))
+RMSE.pruned
+```
+
+Note : *The unpruned tree model has a lower RMSE than pruned tree model, this shows it's the better model.*
+
+Create a data frame for our test data.
+
+```{r}
+test.uscrime.data <- data.frame(M = 14.0,So = 0,Ed = 10.0,Po1 = 12.0,Po2 = 15.5,LF = 0.640,M.F = 94.0,Pop = 150,NW = 1.1,U1 = 0.120,U2 = 3.6,Wealth = 3200,Ineq = 20.1,Prob = 0.04,Time = 39.0)
+```
+
+Predict crimes using the unpruned tree model.The model is giving a prediction of approximately 725.
+
+```{r}
+reg.tree.uscrimes.pred <- predict(reg.tree.uscrimes,newdata = test.uscrime.data)
+reg.tree.uscrimes.pred
+```
+
+Predict crimes using the pruned tree model. The model is giving a prediction of approximately 889.
+
+```{r}
+prune.reg.tree.uscrimes.pred <- predict(prune.reg.tree.uscrimes,newdata = test.uscrime.data)
+prune.reg.tree.uscrimes.pred
+```
+
+### *Fit a Random Forest model and explore*
+
+By default we see the number of trees is 500 and number of variables tried at each split is 5.
+
+```{r}
+rf.uscrime = randomForest(Crime~., data = uscrimes, importance = TRUE)
+rf.uscrime
+```
+Summary of fitted random forest.
+
+```{r}
+summary(rf.uscrime)
+```
+
+Importance of each predictor.
+
+```{r}
+importance(rf.uscrime)
+```
+
+Plot the error vs the number of trees graph. 
+
+```{r}
+plot(rf.uscrime,main = "Random Forest with 500 trees") 
+```
+We get the number of trees with the lowest MSE using the default No. of variables tried at each split(mtry)  at 5. The obtained ntree will be used to train a new random forest model.
+
+```{r}
+# Number of trees with lowest MSE
+which.min(rf.uscrime$mse)
+## [1] 89
+
+# RMSE of this optimal random forest
+sqrt(rf.uscrime$mse[which.min(rf.uscrime$mse)])
+## [1] 275.3281
+```
+
+Let's set the Number of trees as 89
+
+```{r}
+rf.uscrime.2 = randomForest(Crime~., data = uscrimes, importance = TRUE, ntree = 89, mtry = 5)
+rf.uscrime.2
+```
+Importance of each predictor.
+
+```{r}
+importance(rf.uscrime.2)
+```
+
+Plot the error vs the number of trees graph.
+
+```{r}
+plot(rf.uscrime.2, main = "Random Forest with 89 trees") 
+```
+We going to use Grid search to get the best model parameters (ntrees and mtry). 
+We will provide grid search with a range of hyper parameters and the grid search will create various models using different combinations on the hyper parameter and rank the model from the best all the way down to the weakest. We will pick the first model from the ranked pool to do our analysis.
+
+We shall utilize h20 library. This library has some dependence with java virtual environment. JVE need to be installed.
+
+Start up h2o and allocate maximum memory at 8g but can be less depending on your machine.
+
+```{r}
+h2o.no_progress()
+h2o.init(max_mem_size = "8g")
+```
+
+Turn uscrime dataset into h2o object.
+
+```{r}
+set.seed(123)
+train.h2o <- as.h2o(uscrimes)
+train.h2o
+```
+
+Hyper parameters grid for mtrees and mtries. ntrees to start from 20 to 500 and each time increased by 20. mtries to start from 5 to 15 and each time increased by 1.
+
+```{r}
+hyper_grid.h2o <- list(
+  ntrees      = seq(20, 500, by = 20),
+  mtries      = seq(5, 15, by = 1)
+)
+```
+
+Random grid search criteria. With the strategy set as "RandomDiscrete", the model will jump from one random combination to another and stop once a certain level of improvement has been made, certain amount of time has been exceeded, or a certain amount of models have been ran or a combination of these have been met.
+
+```{r}
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.005,
+  stopping_rounds = 10,
+  max_runtime_secs = 30*60
+  )
+```
+
+Create feature names by specifying the response(label) and the predictors.
+
+```{r}
+y <- "Crime"
+x <- setdiff(names(uscrimes), y)
+x
+```
+
+Build grid search.
+
+```{r}
+random_grid <- h2o.grid(
+  algorithm = "randomForest",
+  grid_id = "rf_grid",
+  x = x, 
+  y = y, 
+  training_frame = train.h2o,
+  hyper_params = hyper_grid.h2o,
+  search_criteria = search_criteria
+  )
+```
+
+Below are the results, sorted by our model performance metric of choice from the best(ranked from the best).
+
+```{r}
+grid_performance <- h2o.getGrid(
+  grid_id = "rf_grid", 
+  sort_by = "mse", 
+  decreasing = FALSE
+  )
+print(grid_performance)
+```
+
+See below the best values of mtries and ntrees.
+
+Grab the model_id for the top model, chosen by validation error.
+
+```{r}
+best_model_id <- grid_performance@model_ids[[1]]
+rf.uscrime.3 <- h2o.getModel(best_model_id)
+rf.uscrime.3
+```
+
+
+Predict using the random forest with default parameters (ntrees = 500 and mtry = 5). We have a prediction of 1190 approximately.
+
+```{r}
+rf.uscrime.predict <- predict(rf.uscrime, test.uscrime.data)
+rf.uscrime.predict
+```
+
+Predict using the second random forest with ntrees = 89 and mtry = 5. We have a prediction of 1252 approximately.
+
+```{r}
+rf.uscrime.2.predict <- predict(rf.uscrime.2, test.uscrime.data)
+rf.uscrime.2.predict
+```
+
+Predict using the best random forest model from h20. We have a prediction of 1242 approximately.
+
+```{r}
+# Convert the test data to a h20 data frame.
+test.uscrime.data.h2o <- as.h2o(test.uscrime.data)
+
+# Predict the crime rate
+rf.uscrime.3.predict <- predict(rf.uscrime.3, test.uscrime.data.h2o)
+rf.uscrime.3.predict
+
+```
+
+My finding: ####*Decision tree is known as a weak classifier and prone to overfitting thus the reason why it had a better RMSE than random forest. Random forest introduces randomness and deals with biases introduced by decision tree by return the output as a mean of all the decision trees thus is a better model.*
+
+
+### *Question 10.2*
+
+#### *Describe a situation or problem from your job, everyday life, current events, etc., for which a logistic regression model would be appropriate. List some (up to 5) predictors that you might use.*
+
+Lending firms can use logistic regression to make a judgment on whether to lend a new client some funds or not. Using logistic regression, the lender can use Client's gender, age, occupation, health history, number of children and marital status to predict the probability of the client replaying their loan.
+
+
+### *Question 10.3*
+
+#### *1.	Using the GermanCredit data set germancredit.txt from http://archive.ics.uci.edu/ml/machine-learning-databases/statlog/german / (description at http://archive.ics.uci.edu/ml/datasets/Statlog+%28German+Credit+Data%29 ), use logistic regression to find a good predictive model for whether credit applicants are good credit risks or not.  Show your model (factors used and their coefficients), the software output, and the quality of fit.  You can use the glm function in R. To get a logistic regression (logit) model on data where the response is either zero or one, use family=binomial(link=”logit”) in your glm function call.*
+
+#### *2.	Because the model gives a result between 0 and 1, it requires setting a threshold probability to separate between “good” and “bad” answers.  In this data set, they estimate that incorrectly identifying a bad customer as good, is 5 times worse than incorrectly classifying a good customer as bad.  Determine a good threshold probability based on your model.*
+
+
+My solution: I will train my logistic regression model using all the predictors, then perform feature selection using p-value, compare the various models performance. Lastly compute the total cost using different threshold values
+
+
+Load library
+```{r}
+library(rsample)
+library(pROC)
+library(ROCR)
+library(caret)
+```
+
+Load the GermanCredit data.
+
+```{r}
+germancredit <- read.table('data/germancredit.txt', header = FALSE, stringsAsFactors = FALSE)
+head(germancredit)
+```
+
+Convert the response (V21) into a binary variable,either 0 or 1.
+
+```{r}
+germancredit$V21[germancredit$V21 == 1] <- 0
+germancredit$V21[germancredit$V21 == 2] <- 1
+head(germancredit)
+```
+
+Splitting the data set into training and test data sets, 80% - training and 20% testing using initial_split() from rsample library. rsample will help randomly sample the data.
+
+```{r}
+set.seed(123)
+germancredit_split <- initial_split(germancredit, prop = 0.8)
+germancredit_train <- training(germancredit_split)
+germancredit_test <- testing(germancredit_split)
+```
+
+Lets fit our logistic model.We have an AIC of 795.67.
+
+The model highlights the most significant predictors as shown below.
+
+```{r}
+glm_model1 <- glm(as.factor(V21)~., 
+               data = germancredit_train, 
+               family = binomial(link="logit"))
+
+summary(glm_model1) 
+```
+We will use the anova function to interpret the model.
+Now we can analyze the fitting and interpret what the model is telling us.Below we can see the most significant predictors. V11, V12, V16, V17, V18 and V19 are not significant predictors, we need to remove them and train another model.
+
+*ANOVA means ANalysis Of VAriance*
+
+```{r}
+anova(glm_model1, test="Chisq")
+```
+
+Lets fit a new logistic model using the most significant predictors. We have AIC at 787.33, which is an improvement.
+
+```{r}
+glm_model2 <- glm(as.factor(V21)~ V1+V2+V3+V4+V5+V6+V7+V8+V9+V10+V13+V14+V15+V20, 
+               data = germancredit_train, 
+               family = binomial(link="logit"))
+
+summary(glm_model2) 
+```
+
+We use the anova function to interpret the model.Below we can see the most significant predictors. V15 and V20 are not significant predictors. We need to remove them and train a new model.
+
+```{r}
+anova(glm_model2, test="Chisq")
+```
+
+Lets fit a new logistic model using the most significant predictors. We have AIC at 787.79, no much improvement but we are using all the most significant predictors.
+
+```{r}
+glm_model3 <- glm(as.factor(V21)~ V1+V2+V3+V4+V5+V6+V7+V8+V9+V10+V13+V14, 
+               data = germancredit_train, 
+               family = binomial(link="logit"))
+
+summary(glm_model3) 
+```
+We use the anova function to interpret the model.Below we can see the most significant predictors. All the predictors in model 3 are significant.
+
+```{r}
+anova(glm_model3, test="Chisq")
+```
+
+Let's test our first fitted model using the test data and analyze the results by comparing with the actual response. We have an accuracy of 76% approximately.
+
+```{r}
+glm_model1.pred <- predict(glm_model1,germancredit_test, type = "response")
+
+glm_model1.results <- ifelse(glm_model1.pred > 0.5,1,0)
+misClasificError <- mean(glm_model1.results != germancredit_test$V21)
+print(paste('Accuracy',1-misClasificError))
+
+#roc(germancredit_test$V21, round(glm_model1.pred))
+```
+
+Let's test our second fitted model using the test data and analyze the results by comparing with the actual response. We have an accuracy of 74% approximately.
+
+```{r}
+glm_model2.pred <- predict(glm_model2,germancredit_test[c("V1","V2","V3","V4","V5","V6","V7","V8","V9","V10","V13","V14","V15","V20")], type = "response")
+
+glm_model2.results <- ifelse(glm_model2.pred > 0.5,1,0)
+misClasificError <- mean(glm_model2.results != germancredit_test$V21)
+print(paste('Accuracy',1-misClasificError))
+
+#roc(germancredit_test$V21, round(glm_model2.pred))
+```
+
+Let's test our third fitted model using the test data and analyze the results by comparing with the actual response. We have an accuracy of 75% approximately.
+
+```{r}
+glm_model3.pred <- predict(glm_model3,germancredit_test[c("V1","V2","V3","V4","V5","V6","V7","V8","V9","V10","V13","V14")], type = "response")
+
+glm_model3.results <- ifelse(glm_model3.pred > 0.5,1,0)
+misClasificError <- mean(glm_model3.results != germancredit_test$V21)
+print(paste('Accuracy',1-misClasificError))
+
+#roc(germancredit_test$V21, round(glm_model3.pred))
+```
+
+we are going to plot the ROC curve and calculate the AUC (area under the curve) which are typical performance measurements for a binary classifier.
+The ROC is a curve generated by plotting the true positive rate (TPR) against the false positive rate (FPR) at various threshold settings while the AUC is the area under the ROC curve. As a rule of thumb, a model with good predictive ability should have an AUC closer to 1 (1 is ideal) than to 0.5.
+
+
+Analysis the first fitted model using ROC and AUC.
+
+tpr=(TP/(TP+FP)) and fpr =(FP/(FP+TN))
+
+```{r}
+glm_model1_pr <- prediction(glm_model1.pred, germancredit_test$V21)
+glm_model1_prf <- performance(glm_model1_pr, measure = "tpr", x.measure = "fpr")
+plot(glm_model1_prf)
+
+#Compute AUC
+glm_model1_auc <- performance(glm_model1_pr, measure = "auc")
+auc <- glm_model1_auc@y.values[[1]]
+auc
+```
+
+The model has an AUC of 0.78 approximately.
+
+Analysis the second fitted model using ROC and AUC.
+
+```{r}
+glm_model2_pr <- prediction(glm_model2.pred, germancredit_test$V21)
+glm_model2_prf <- performance(glm_model2_pr, measure = "tpr", x.measure = "fpr")
+plot(glm_model2_prf)
+
+#Compute AUC
+glm_model2_auc <- performance(glm_model2_pr, measure = "auc")
+auc <- glm_model2_auc@y.values[[1]]
+auc
+```
+The model has an AUC of 0.78 approximately.
+
+Analysis the third fitted model using ROC and AUC.
+
+```{r}
+glm_model3_pr <- prediction(glm_model3.pred, germancredit_test$V21)
+glm_model3_prf <- performance(glm_model3_pr, measure = "tpr", x.measure = "fpr")
+plot(glm_model3_prf)
+
+#Compute AUC
+glm_model3_auc <- performance(glm_model3_pr, measure = "auc")
+auc <- glm_model3_auc@y.values[[1]]
+auc
+```
+The model has an AUC of 0.78 approximately.
+
+Using the third model which we trained using the most significant predictors.
+We generate a confusion matrix.
+
+Compute for threshold at 0.8.
+```{r}
+threshd <- 0.8
+y_thres <- as.integer(glm_model3.pred > threshd)
+confMatrix <- as.matrix(table(y_thres,germancredit_test$V21))
+confMatrix
+```
+
+
+The total cost.
+
+```{r}
+cost <- 133 * 0 + 5 * 5 + 53 * 1 + 8 * 0
+cost
+```
+Compute for threshold at 0.85.
+```{r}
+threshd <- 0.85
+y_thres <- as.integer(glm_model3.pred > threshd)
+confMatrix <- as.matrix(table(y_thres,germancredit_test$V21))
+confMatrix
+```
+
+
+The total cost.
+
+```{r}
+cost <- 135 * 0 + 3 * 5 + 55 * 1 + 6 * 0
+cost
+```
+
+Compute for threshold at 0.89.
+```{r}
+threshd <- 0.89
+y_thres <- as.integer(glm_model3.pred > threshd)
+confMatrix <- as.matrix(table(y_thres,germancredit_test$V21))
+confMatrix
+```
+
+
+The total cost.
+
+```{r}
+cost <- 137 * 0 + 1 * 5 + 59 * 1 + 2 * 0
+cost
+```
+
+##### Conclusion : *As we minimize mis-classification by increasing the threshold, the total cost comes down*

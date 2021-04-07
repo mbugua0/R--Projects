@@ -1,0 +1,294 @@
+---
+title: "Variable Selection"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### *Using the crime data set uscrime.txt to build a regression model using:*
+*1.	Stepwise regression*
+*2.	Lasso*
+*3.	Elastic net*
+*For Parts 2 and 3, we have to scale the data first – otherwise, the regression coefficients will be on different scales and the constraint won’t have the desired effect.*
+
+*For Parts 2 and 3, we are going to use the glmnet function in R.*  
+
+*Notes on R:*
+*•	For the elastic net model, what we called λ in the videos, glmnet calls “alpha”; you can get a range of results by varying alpha from 1 (lasso) to 0 (ridge regression) [and, of course, other values of alpha in between].*
+*•	In a function call like glmnet(x,y,family=”mgaussian”,alpha=1) the predictors x need to be in R’s matrix format, rather than data frame format.  You can convert a data frame to a matrix using as.matrix – for example, x <- as.matrix(data[,1:n-1])*
+*•	Rather than specifying a value of T, glmnet returns models for a variety of values of T.* 
+
+## R Markdown
+
+Clear environment.
+
+```{r}
+rm(list = ls())
+```
+
+Load libraries.
+
+```{r}
+library(glmnet)
+library(ggplot2)
+library(GGally)
+library(caret)
+```
+
+Load the US Crime data into a data frame.
+
+```{r}
+uscrimes <- read.table('data/uscrime.txt', header = TRUE, stringsAsFactors = FALSE)
+head(uscrimes)
+```
+
+
+Perform backward elimination.
+
+First, define a linear model with all the predictors.
+Lastly, perform backward stepwise regression.
+
+```{r}
+all_predictors_model <- lm(Crime~., data = uscrimes)
+
+backward_model <- step(all_predictors_model, 
+     scope = formula(all_predictors_model),
+     direction = "backward",
+     trace = 0)
+
+backward_model
+```
+
+View results of backward stepwise regression. This shows how a variable was removed from the model at every step and the effect this had on the model performance using AIC.
+
+```{r}
+backward_model$anova
+```
+View final model.
+
+```{r}
+backward_model$coefficients
+```
+
+Display the correlation for all the variables selected using backward elimination. The selected variables are correlated to the label/response.
+
+```{r}
+ggscatmat(uscrimes, columns = c("M","Ed","Po1","M.F","U1","U2","Ineq","Prob","Crime"))
+```
+
+Perform forward selection.
+
+First, define intercept-only model.
+Lastly, perform forward stepwise regression. We are going to make use of the intercept_only_model and all_predictors_model.
+
+```{r}
+intercept_only_model  <- lm(Crime~1, data = uscrimes)
+
+forward_model <- step(intercept_only_model, 
+     scope = formula(all_predictors_model),
+     direction = "forward",
+     trace = 0)
+
+forward_model
+```
+
+View results of forward stepwise regression. This shows how a variable was added to the model at every step and the effect this had on the model performance using AIC.
+
+```{r}
+forward_model$anova
+```
+
+View final model.
+
+```{r}
+forward_model$coefficients
+```
+
+Display the correlation for all the variables selected using forward selection.The selected variables are correlated to the label/response.
+
+```{r}
+ggscatmat(uscrimes, columns = c("M","Ed","Po1","U2","Ineq","Prob","Crime"))
+```
+
+Perform both-direction stepwise selection. We are going to make use of the intercept_only_model and all_predictors_model.
+
+```{r}
+both_stepwise_model <- step(all_predictors_model, 
+                     scope = list(lower = formula(intercept_only_model),
+                                  upper = formula(all_predictors_model)),
+                     direction = "both",
+                     trace = 0)
+
+both_stepwise_model
+```
+
+
+View results of both direction stepwise regression. This shows how a variable was removed from the model at every step and the effect this had on the model performance using AIC. If you display the model activities, it shows variable added and others removed from the model but the output using $anova only shows variables removed from the model.
+
+```{r}
+both_stepwise_model$anova
+```
+
+View final model.
+
+```{r}
+both_stepwise_model$coefficients
+```
+
+Display the correlation for all the variables selected using both direction stepwise regression.The selected variables are correlated to the label/response.
+
+```{r}
+ggscatmat(uscrimes, columns = c("M","Ed","Po1","M.F","U1","U2","Ineq","Prob","Crime"))
+```
+
+Perform Cross-validation on LASSO regression to get the best value of lambda.Lasso stands for Least Absolute Shrinkage and Selection Operator. It shrinks the regression coefficients toward zero by penalizing the regression model with a penalty term called L1-norm, which is the sum of the absolute coefficients.
+In the lasso regression, the penalty has the effect of forcing some of the coefficient estimates, with a minor contribution to the model, to be exactly equal to zero. This means that, lasso can be also seen as an alternative to the subset selection methods for performing variable selection in order to reduce the complexity of the model.
+
+```{r}
+set.seed(123)
+lasso_cv_model <- cv.glmnet(x = as.matrix(uscrimes[,-16]),
+                         y = as.matrix(uscrimes[,16]),
+                         alpha = 1,
+                         nfolds = 8,
+                         nlambda = 20,
+                         type.measure = "mse",
+                         family = "gaussian",
+                         standardize = TRUE)
+lasso_cv_model
+```
+
+Plot the LASSO model.
+
+```{r}
+plot(lasso_cv_model)
+```
+
+Display the best lambda value.
+
+```{r}
+lasso_cv_model$lambda.min
+```
+
+Fit the final model on the our data using the best lambda.
+
+```{r}
+lasso_model <- glmnet(x = as.matrix(uscrimes[,-16]),
+                      y = as.matrix(uscrimes[,16]),
+                      alpha = 1, 
+                      lambda = lasso_cv_model$lambda.min,
+                      type.measure = "mse",
+                      family = "gaussian",
+                      standardize = TRUE)
+
+lasso_model
+```
+
+Display LASSO regression coefficients.
+
+```{r}
+coef(lasso_model)
+```
+
+Perform Cross-validation on Ridge Regression to get the best value of lambda.Ridge regression shrinks the regression coefficients, so that variables, with minor contribution to the outcome, have their coefficients close to zero.
+The shrinkage of the coefficients is achieved by penalizing the regression model with a penalty term called L2-norm, which is the sum of the squared coefficients.
+
+```{r}
+set.seed(123) 
+ridge_cv_model <- cv.glmnet(x = as.matrix(uscrimes[,-16]),
+                         y = as.matrix(uscrimes[,16]),
+                         alpha = 0,
+                         nfolds = 8,
+                         nlambda = 20,
+                         type.measure = "mse",
+                         family = "gaussian",
+                         standardize = TRUE)
+ridge_cv_model
+```
+
+Plot the Ridge model. The best model is defined as the model that has the lowest prediction error, RMSE
+
+```{r}
+plot(ridge_cv_model)
+```
+
+Display the best lambda value.
+
+```{r}
+ridge_cv_model$lambda.min
+```
+
+Fit the final model on the our data using the best lambda.
+
+```{r}
+ridge_model <- glmnet(x = as.matrix(uscrimes[,-16]),
+                      y = as.matrix(uscrimes[,16]),
+                      alpha = 0, 
+                      lambda = ridge_cv_model$lambda.min,
+                      type.measure = "mse",
+                      family = "gaussian",
+                      standardize = TRUE)
+
+ridge_model
+```
+Display Ridge regression coefficients.
+
+```{r}
+coef(ridge_model)
+```
+
+Perform Cross-validation on Elastic Net to get the best model.Elastic Net produces a regression model that is penalized with both the L1-norm and L2-norm. The consequence of this is to effectively shrink coefficients (like in ridge regression) and to set some coefficients to zero (as in LASSO).
+Now, there are two parameters to tune: λ and α. The glmnet package allows to tune λ via cross-validation for a fixed α, but it does not support α-tuning, so we will turn to caret for this job.
+
+```{r}
+set.seed(123)
+elastic_net_cv_model <- train(Crime ~., 
+                              data = uscrimes, 
+                              method = "glmnet",
+                              trControl = trainControl("cv", number = 8)
+                              )   
+
+elastic_net_cv_model
+```
+
+Note : *Best tuning parameter. so this result show it used lasso for regularization, since alpha is 1*
+
+```{r}
+elastic_net_cv_model$bestTune 
+```
+
+Plot the Elastic Net model. 
+
+```{r}
+plot(elastic_net_cv_model)
+```
+
+Coefficient of the final model. You need to specify the best lambda.
+
+```{r}
+coef(elastic_net_cv_model$finalModel, elastic_net_cv_model$bestTune$lambda)
+```
+
+Fit the final model on the our data using the best lambda and alpha.
+
+```{r}
+elastic_net_model <- glmnet(x = as.matrix(uscrimes[,-16]),
+                      y = as.matrix(uscrimes[,16]),
+                      alpha = elastic_net_cv_model$bestTune$alpha, 
+                      lambda = elastic_net_cv_model$bestTune$lambda,
+                      type.measure = "mse",
+                      family = "gaussian",
+                      standardize = TRUE)
+
+elastic_net_model
+```
+
+Display Elastic Net regression coefficients.
+
+```{r}
+coef(elastic_net_model)
+```
+
+Observation: *In step-wise (backward, forward and both) features selection the model eliminate the insignificant variables and only fits the final model with the significant variables.While in ridge, lasso and elastic net models, we use all the variables to fit the model, if the variables are insignificant their coefficient shrinks close to zero (Ridge) and for some their coefficients are set to zero (Lasso) using regularization.* 
+
